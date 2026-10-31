@@ -82,7 +82,6 @@ class ChatServerGUI:
         self.server_color = get_user_color(self.server_name)
         self.emoji_window: Optional[tk.Toplevel] = None
         self.sticker_window: Optional[tk.Toplevel] = None
-        self.selected_username: Optional[str] = None
 
         self.setup_ui()
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -247,21 +246,14 @@ class ChatServerGUI:
             padx=10, pady=8, bd=1, relief="solid", state="disabled", cursor="hand2",
             wrap="none",
         )
-        self.users_display.pack(fill="both", expand=True, padx=10, pady=(0, 8))
-        self.users_display.tag_config("selected_row", background="#E3F2FD")
+        self.users_display.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         self.users_display.tag_config("user_text", font=(f_font, 10, "bold"), foreground="#212121")
         self.users_display.tag_config("ip_text", font=(f_font, 9), foreground="#616161")
         self.users_display.tag_config("host_text", font=(f_font, 10, "bold"), foreground="#1976D2")
-        self.users_display.bind("<Button-1>", self.on_user_list_click)
 
         # สำหรับ backward compatibility
         self.user_listbox = self.users_display
 
-        tk.Button(
-            right, text="⚠️ เตะผู้ใช้ที่เลือก (Kick)", font=(f_font, 9, "bold"),
-            bg="#D32F2F", fg="white", activebackground="#B71C1C", activeforeground="white",
-            relief="flat", padx=8, pady=5, cursor="hand2", command=self.kick_selected_user,
-        ).pack(fill="x", padx=10, pady=(0, 10))
 
     def _write_log(self, fn):
         """จัดการเขียนข้อความลง ScrolledText แบบ Read-only ป้องกันผู้ใช้แก้ไขหรือลบแชทบนหน้าจอ"""
@@ -549,35 +541,6 @@ class ChatServerGUI:
         users = server_info + client_users
         self.broadcast_packet({"type": "user_list", "users": users, "count": len(users)})
 
-    def on_user_list_click(self, event):
-        try:
-            idx = self.users_display.index(f"@{event.x},{event.y}")
-            line_num = int(idx.split(".")[0])
-        except Exception:
-            return
-
-        with self.lock:
-            displayed_names = []
-            if self.is_running:
-                displayed_names.append(self.server_name)
-            for info in self.clients.values():
-                displayed_names.append(info["username"])
-
-        if 1 <= line_num <= len(displayed_names):
-            self.selected_username = displayed_names[line_num - 1]
-        else:
-            self.selected_username = None
-
-        self._refresh_user_selection(displayed_names)
-
-    def _refresh_user_selection(self, displayed_names: list):
-        self.users_display.tag_remove("selected_row", "1.0", "end")
-        if self.selected_username and self.selected_username in displayed_names:
-            line = displayed_names.index(self.selected_username) + 1
-            self.users_display.tag_add("selected_row", f"{line}.0", f"{line}.end+1c")
-        else:
-            self.selected_username = None
-
     def update_user_list_ui(self):
         def _update():
             self.users_display.configure(state="normal")
@@ -620,36 +583,9 @@ class ChatServerGUI:
 
             self.users_display.configure(state="disabled")
 
-            user_names = [u["username"] for u in displayed]
-            self._refresh_user_selection(user_names)
+
 
         self.root.after(0, _update)
-
-    def kick_selected_user(self):
-        if not self.selected_username:
-            messagebox.showinfo("แจ้งเตือน", "กรุณาคลิกเลือกผู้ใช้งานที่ต้องการเตะจากรายการ")
-            return
-
-        target_username = self.selected_username
-        if target_username == self.server_name:
-            messagebox.showwarning("แจ้งเตือน", "ไม่สามารถเตะเซิร์ฟเวอร์ออกจากห้องได้")
-            return
-
-        if not messagebox.askyesno("ยืนยัน", f"คุณต้องการเตะคุณ '{target_username}' ออกจากเซิร์ฟเวอร์ใช่หรือไม่?"):
-            return
-
-        target_sock = None
-        with self.lock:
-            for sock, info in self.clients.items():
-                if info["username"] == target_username:
-                    target_sock = sock
-                    break
-
-        if target_sock:
-            self.send_to_socket(target_sock, {"type": "kicked", "reason": "คุณถูกเตะออกจากห้องโดยผู้ดูแลระบบ"})
-            self.log("ADMIN", f"⚠️ ผู้ดูแลระบบได้เตะคุณ {target_username} ออกจากห้องแชท")
-            self.remove_client(target_sock, target_username)
-            self.selected_username = None
 
     def send_chat_message(self):
         if not self.is_running:
