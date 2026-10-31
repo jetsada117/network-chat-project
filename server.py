@@ -82,6 +82,7 @@ class ChatServerGUI:
         self.server_color = get_user_color(self.server_name)
         self.emoji_window: Optional[tk.Toplevel] = None
         self.sticker_window: Optional[tk.Toplevel] = None
+        self.selected_username: Optional[str] = None
 
         self.setup_ui()
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -241,11 +242,20 @@ class ChatServerGUI:
         self.lbl_user_count = tk.Label(user_header, text="👥 ออนไลน์ (0 คน)", font=(f_font, 11, "bold"), bg="#FFFFFF")
         self.lbl_user_count.pack(side="left")
 
-        self.user_listbox = tk.Listbox(
+        self.users_display = tk.Text(
             right, font=(f_font, 10), bg="#FAFAFA", fg="#212121",
-            selectbackground="#1E88E5", selectforeground="white", bd=1, relief="solid",
+            padx=10, pady=8, bd=1, relief="solid", state="disabled", cursor="hand2",
+            wrap="none",
         )
-        self.user_listbox.pack(fill="both", expand=True, padx=10, pady=(0, 8))
+        self.users_display.pack(fill="both", expand=True, padx=10, pady=(0, 8))
+        self.users_display.tag_config("selected_row", background="#E3F2FD")
+        self.users_display.tag_config("user_text", font=(f_font, 10, "bold"), foreground="#212121")
+        self.users_display.tag_config("ip_text", font=(f_font, 9), foreground="#616161")
+        self.users_display.tag_config("host_text", font=(f_font, 10, "bold"), foreground="#1976D2")
+        self.users_display.bind("<Button-1>", self.on_user_list_click)
+
+        # สำหรับ backward compatibility
+        self.user_listbox = self.users_display
 
         tk.Button(
             right, text="⚠️ เตะผู้ใช้ที่เลือก (Kick)", font=(f_font, 9, "bold"),
@@ -510,30 +520,117 @@ class ChatServerGUI:
 
     def broadcast_user_list(self):
         with self.lock:
-            client_users = [{"username": info["username"], "color": info["color"]} for info in self.clients.values()]
-        users = ([{"username": self.server_name, "color": self.server_color}] if self.is_running else []) + client_users
+            client_users = [
+                {
+                    "username": info["username"],
+                    "color": info["color"],
+                    "ip": info["addr"][0],
+                    "port": info["addr"][1],
+                    "addr_str": f"{info['addr'][0]}:{info['addr'][1]}",
+                    "is_host": False,
+                }
+                for info in self.clients.values()
+            ]
+        server_info = []
+        if self.is_running:
+            port_val = 5000
+            try:
+                port_val = int(self.entry_port.get().strip())
+            except Exception:
+                pass
+            server_info = [{
+                "username": self.server_name,
+                "color": self.server_color,
+                "ip": get_lan_ip(),
+                "port": port_val,
+                "addr_str": "โฮสต์",
+                "is_host": True,
+            }]
+        users = server_info + client_users
         self.broadcast_packet({"type": "user_list", "users": users, "count": len(users)})
+
+    def on_user_list_click(self, event):
+        try:
+            idx = self.users_display.index(f"@{event.x},{event.y}")
+            line_num = int(idx.split(".")[0])
+        except Exception:
+            return
+
+        with self.lock:
+            displayed_names = []
+            if self.is_running:
+                displayed_names.append(self.server_name)
+            for info in self.clients.values():
+                displayed_names.append(info["username"])
+
+        if 1 <= line_num <= len(displayed_names):
+            self.selected_username = displayed_names[line_num - 1]
+        else:
+            self.selected_username = None
+
+        self._refresh_user_selection(displayed_names)
+
+    def _refresh_user_selection(self, displayed_names: list):
+        self.users_display.tag_remove("selected_row", "1.0", "end")
+        if self.selected_username and self.selected_username in displayed_names:
+            line = displayed_names.index(self.selected_username) + 1
+            self.users_display.tag_add("selected_row", f"{line}.0", f"{line}.end+1c")
+        else:
+            self.selected_username = None
 
     def update_user_list_ui(self):
         def _update():
-            self.user_listbox.delete(0, "end")
+            self.users_display.configure(state="normal")
+            self.users_display.delete("1.0", "end")
+
             with self.lock:
                 total_count = len(self.clients) + (1 if self.is_running else 0)
                 self.lbl_user_count.configure(text=f"👥 ออนไลน์ ({total_count} คน)")
+
+                displayed = []
                 if self.is_running:
-                    self.user_listbox.insert("end", f"{self.server_name} (โฮสต์)")
+                    displayed.append({
+                        "username": self.server_name,
+                        "color": self.server_color,
+                        "addr_str": "โฮสต์",
+                        "is_host": True,
+                    })
                 for info in self.clients.values():
-                    self.user_listbox.insert("end", f"{info['username']} ({info['addr'][0]}:{info['addr'][1]})")
+                    displayed.append({
+                        "username": info["username"],
+                        "color": info["color"],
+                        "addr_str": f"{info['addr'][0]}:{info['addr'][1]}",
+                        "is_host": False,
+                    })
+
+            for u in displayed:
+                name = u["username"]
+                color = u["color"]
+                tag_name = f"dot_{name}_{abs(hash(color))}"
+                self.users_display.tag_config(
+                    tag_name, foreground=color, font=("Segoe UI", 11, "bold")
+                )
+                self.users_display.insert("end", " ● ", tag_name)
+
+                if u["is_host"]:
+                    self.users_display.insert("end", f"{name}", "host_text")
+                else:
+                    self.users_display.insert("end", f"{name}", "user_text")
+                self.users_display.insert("end", f" ({u['addr_str']})\n", "ip_text")
+
+            self.users_display.configure(state="disabled")
+
+            user_names = [u["username"] for u in displayed]
+            self._refresh_user_selection(user_names)
 
         self.root.after(0, _update)
 
     def kick_selected_user(self):
-        sel = self.user_listbox.curselection()
-        if not sel:
-            messagebox.showinfo("แจ้งเตือน", "กรุณาเลือกผู้ใช้งานที่ต้องการเตะจากรายการ")
+        if not self.selected_username:
+            messagebox.showinfo("แจ้งเตือน", "กรุณาคลิกเลือกผู้ใช้งานที่ต้องการเตะจากรายการ")
             return
 
-        target_username = self.user_listbox.get(sel[0]).split(" (")[0]
+        target_username = self.selected_username
         if target_username == self.server_name:
             messagebox.showwarning("แจ้งเตือน", "ไม่สามารถเตะเซิร์ฟเวอร์ออกจากห้องได้")
             return
@@ -552,6 +649,7 @@ class ChatServerGUI:
             self.send_to_socket(target_sock, {"type": "kicked", "reason": "คุณถูกเตะออกจากห้องโดยผู้ดูแลระบบ"})
             self.log("ADMIN", f"⚠️ ผู้ดูแลระบบได้เตะคุณ {target_username} ออกจากห้องแชท")
             self.remove_client(target_sock, target_username)
+            self.selected_username = None
 
     def send_chat_message(self):
         if not self.is_running:

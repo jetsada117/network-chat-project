@@ -292,7 +292,7 @@ class ChatClientGUI:
         )
 
         # ฝั่งขวา: รายชื่อผู้ใช้ออนไลน์
-        right_body = tk.Frame(body, bg="#FFFFFF", bd=1, relief="solid", width=220)
+        right_body = tk.Frame(body, bg="#FFFFFF", bd=1, relief="solid", width=250)
         right_body.pack(side="right", fill="y", padx=(8, 0))
         right_body.pack_propagate(False)
 
@@ -316,13 +316,20 @@ class ChatClientGUI:
             bd=0,
             state="disabled",
             cursor="arrow",
+            wrap="none",
         )
         self.users_display.pack(fill="both", expand=True)
         self.users_display.tag_config(
             "me_text", font=(self.font_family, 10, "bold"), foreground="#1976D2"
         )
         self.users_display.tag_config(
-            "other_text", font=(self.font_family, 10), foreground="#212121"
+            "other_text", font=(self.font_family, 10, "bold"), foreground="#212121"
+        )
+        self.users_display.tag_config(
+            "host_text", font=(self.font_family, 10, "bold"), foreground="#1976D2"
+        )
+        self.users_display.tag_config(
+            "ip_text", font=(self.font_family, 9), foreground="#616161"
         )
 
         # Bottom Bar: แถบส่งข้อความ
@@ -618,11 +625,25 @@ class ChatClientGUI:
             self.users_display.insert("end", " ● ", tag_name)
 
             is_me = name == self.my_username
-            self.users_display.insert(
-                "end",
-                f"{name} (คุณ)\n" if is_me else f"{name}\n",
-                "me_text" if is_me else "other_text",
-            )
+            is_host = u.get("is_host", False) or name == "Server"
+            addr_str = u.get("addr_str", "")
+            if not addr_str and u.get("ip"):
+                addr_str = f"{u['ip']}:{u.get('port', '')}"
+
+            if is_me:
+                self.users_display.insert("end", f"{name} (คุณ)", "me_text")
+            elif is_host:
+                self.users_display.insert("end", f"{name}", "host_text")
+            else:
+                self.users_display.insert("end", f"{name}", "other_text")
+
+            # แสดง IP / สถานะโฮสต์ เหมือนกับฝั่ง Server
+            if is_host:
+                self.users_display.insert("end", " (โฮสต์)\n", "ip_text")
+            elif addr_str:
+                self.users_display.insert("end", f" ({addr_str})\n", "ip_text")
+            else:
+                self.users_display.insert("end", "\n")
 
         self.users_display.configure(state="disabled")
 
